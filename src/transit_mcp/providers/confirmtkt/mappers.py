@@ -31,6 +31,80 @@ from ...models.domain import (
 
 _AVAILABLE_HINT = re.compile(r"(AVL|AVAILABLE|CURR_AVBL|RAC)", re.IGNORECASE)
 
+# Upstream terminates availability/booking statuses with a '#' and caps the value at 14
+# characters, so observed payloads contain "NOT AVAILABLE#" and "AVAILABLE-0060#", and
+# anything longer is cut mid-word ("TRAIN CANCELLED" -> "TRAIN CANCELLE#"). Repair that
+# here, at the provider boundary: clients display these strings verbatim and
+# `services.ranking` matches them against an exact vocabulary ("train cancelled"), which
+# a terminated or clipped value silently misses.
+_STATUS_PAD_RE = re.compile(r"[#\s]+$")
+_STATUS_HEAD_RE = re.compile(r"^[A-Za-z][A-Za-z _]*")
+_MIN_REPAIR_PREFIX = 4  # never complete a stub too short to identify
+
+# Deliberately free of prefix-overlapping entries, so a truncated head either matches
+# exactly one canonical status or is left untouched.
+_STATUS_VOCABULARY = (
+    "AVAILABLE",
+    "NOT AVAILABLE",
+    "CURR_AVBL",
+    "RAC",
+    "WL",
+    "GNWL",
+    "PQWL",
+    "RLWL",
+    "TQWL",
+    "CKWL",
+    "REGRET",
+    "CONFIRM",
+    "CONFIRMED",
+    "PROBABLE",
+    "TRAIN CANCELLED",
+    "TRAIN DEPARTED",
+    "DEPARTED",
+    "CHART PREPARED",
+    "CHART NOT PREPARED",
+    "BOOKING CLOSED",
+    "RELEASED",
+)
+
+
+def _apply_case(sample: str, canonical: str) -> str:
+    """Render ``canonical`` in the same case style as ``sample``."""
+    if sample.isupper():
+        return canonical
+    if sample.islower():
+        return canonical.lower()
+    return canonical.title()
+
+
+def sanitize_status(value: object) -> str | None:
+    """Clean one raw upstream status string.
+
+    Drops the trailing ``#`` terminator and completes a word the 14-character cap cut
+    short, but only when the stub matches exactly one known status. Anything
+    unrecognized is returned as-is (minus the terminator) - an unfamiliar status is
+    still useful to the caller, an invented one is not.
+    """
+    text = _blank_to_none(value)
+    if text is None:
+        return None
+    text = _STATUS_PAD_RE.sub("", text).strip()
+    if not text:
+        return None
+
+    match = _STATUS_HEAD_RE.match(text)
+    if match is None:
+        return text
+    head = match.group().rstrip()
+    if not head or head.upper() in _STATUS_VOCABULARY:
+        return text  # already a complete status; keep any numeric tail intact
+    if len(head) < _MIN_REPAIR_PREFIX:
+        return text
+    candidates = [c for c in _STATUS_VOCABULARY if c.startswith(head.upper())]
+    if len(candidates) != 1:
+        return text  # ambiguous ("TRAIN " -> CANCELLED or DEPARTED); do not guess
+    return _apply_case(head, candidates[0]) + text[match.end() :]
+
 
 def _to_float(value: object) -> float | None:
     if value is None or value == "":
@@ -87,8 +161,8 @@ def _extract_seats(status_raw: str | None, display: str | None) -> int | None:
 
 
 def map_availability(raw: AvailabilityRaw) -> ClassAvailability:
-    status_raw = _blank_to_none(raw.get("availability"))
-    display = _blank_to_none(raw.get("availabilityDisplayName"))
+    status_raw = sanitize_status(raw.get("availability"))
+    display = sanitize_status(raw.get("availabilityDisplayName"))
     chance = extract_percentage(raw.get("predictionPercentage"))
     if chance is None:
         chance = extract_percentage(raw.get("prediction"))
@@ -99,7 +173,7 @@ def map_availability(raw: AvailabilityRaw) -> ClassAvailability:
         status_display=display,
         seats=_extract_seats(status_raw, display),
         fare=parse_int(raw.get("fare")),
-        confirm_status=_blank_to_none(raw.get("confirmTktStatus")),
+        confirm_status=sanitize_status(raw.get("confirmTktStatus")),
         confirm_chance=chance,
     )
 

@@ -34,9 +34,15 @@ def fmt_minutes(minutes: int | None) -> str:
 
 def _leg_line(leg) -> str:
     t = leg.train
-    seg = f"{leg.from_code} {t.departure} -> {leg.to_code} {t.arrival}"
+    dep = f"{leg.from_code} {t.departure}"
     if leg.departure_date:
-        seg = f"{leg.from_code} {t.departure} ({leg.departure_date}) -> {leg.to_code} {t.arrival}"
+        dep += f" ({leg.departure_date})"
+    arr = f"{leg.to_code} {t.arrival}"
+    # Only date the arrival when it rolls into another day, so an overnight leg reads
+    # unambiguously instead of looking like it lands before it left.
+    if leg.arrival_date and leg.arrival_date != leg.departure_date:
+        arr += f" ({leg.arrival_date})"
+    seg = f"{dep} -> {arr}"
     a = leg.availability
     cls = ""
     if a:

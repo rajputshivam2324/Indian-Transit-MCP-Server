@@ -48,6 +48,58 @@ def _index_of(codes: list[str], *candidates: str, default: int | None = None) ->
     return default
 
 
+def _shift_date(api_date: str | None, days: int) -> str | None:
+    """``add_days`` that tolerates a missing/unparseable date instead of raising."""
+    if not api_date:
+        return None
+    if days <= 0:
+        return api_date
+    try:
+        return add_days(api_date, days)
+    except (ValueError, TypeError):
+        return None
+
+
+def _describe_day(date_str: str | None, day_index: int) -> str:
+    """Label a journey day: the real calendar date when known, else ``day N``."""
+    if date_str:
+        return date_str
+    return f"day {day_index + 1} of the journey"
+
+
+def _day_change_note(
+    *,
+    arrival_day: int,
+    departure_day: int,
+    arrival_date: str | None,
+    arrival_time: str,
+    departure_date: str | None,
+) -> str | None:
+    """Describe leg 2's departure day relative to leg 1's *arrival* day.
+
+    The comparison must be against leg 1's arrival, never its departure: an overnight
+    leg 1 has already rolled past midnight, so a leg 2 departing on the following
+    calendar date is usually the *same* day leg 1 arrives, with no extra day of
+    waiting. ``arrival_day``/``departure_day`` are 0-based day indices measured from
+    leg 1's departure day.
+    """
+    if departure_day > arrival_day:
+        gap = departure_day - arrival_day
+        when = "the day after" if gap == 1 else f"{gap} days after"
+        return (
+            f"Second leg departs {_describe_day(departure_date, departure_day)}, "
+            f"{when} the first leg arrives "
+            f"({_describe_day(arrival_date, arrival_day)} at {arrival_time})."
+        )
+    if arrival_day > 0 and departure_day == arrival_day:
+        return (
+            f"First leg travels overnight and arrives "
+            f"{_describe_day(arrival_date, arrival_day)} at {arrival_time}; the second "
+            f"leg departs that same day, not the day after."
+        )
+    return None
+
+
 def _best_class(train: Train, classes: set[str] | None):
     pool = train.availability
     if classes:
@@ -150,7 +202,7 @@ class SplitJourneyService:
                 continue
             for leg1, leg2, offset in result:
                 itin = self._build_itinerary(
-                    src, dst, hub, leg1, leg2, offset, classes, min_transfer, max_layover
+                    src, dst, hub, leg1, leg2, offset, date, classes, min_transfer, max_layover
                 )
                 if itin is not None:
                     itineraries.append(itin)
@@ -281,6 +333,7 @@ class SplitJourneyService:
         leg1: Train,
         leg2: Train,
         offset: int,
+        date: str,
         classes: set[str] | None,
         min_transfer: int,
         max_layover: float,
@@ -293,6 +346,21 @@ class SplitJourneyService:
         layover = leg2_dep - leg1_arr
         if layover < min_transfer or layover > max_layover:
             return None
+
+        # Day indices (0-based) are measured from leg 1's departure day. Leg 1 can roll
+        # past midnight, so every day comparison below uses its ARRIVAL day.
+        leg1_arrival_day = leg1_arr // _MINUTES_PER_DAY
+        leg2_departure_day = leg2_dep // _MINUTES_PER_DAY
+        leg2_arrival_day = leg2_arr // _MINUTES_PER_DAY
+
+        leg1_departure_date = leg1.departure_date or date
+        leg1_arrival_date = _shift_date(leg1_departure_date, leg1_arrival_day)
+        # `offset` already encodes which date leg 2 was searched on, so derive its date
+        # from the requested journey date when the payload omits one.
+        leg2_departure_date = leg2.departure_date or _shift_date(date, leg2_departure_day)
+        leg2_arrival_date = _shift_date(
+            leg2_departure_date, leg2_arrival_day - leg2_departure_day
+        )
 
         # Prefer a class available on both legs so the fare and confirmation are for a
         # single, bookable class. Fall back to each leg's best class only if none is shared.
@@ -321,8 +389,23 @@ class SplitJourneyService:
             arrival_station and departure_station and arrival_station != departure_station
         )
 
+        day_note = _day_change_note(
+            arrival_day=leg1_arrival_day,
+            departure_day=leg2_departure_day,
+            arrival_date=leg1_arrival_date,
+            arrival_time=leg1.arrival or "?",
+            departure_date=leg2_departure_date,
+        )
         warnings = self._build_warnings(
-            leg1, leg2, a1, a2, layover, offset, arrival_station, departure_station, requires_change
+            leg1,
+            leg2,
+            a1,
+            a2,
+            layover,
+            day_note,
+            arrival_station,
+            departure_station,
+            requires_change,
         )
         if not same_class and a1 is not None and a2 is not None:
             warnings.append(
@@ -337,14 +420,16 @@ class SplitJourneyService:
                     train=leg1,
                     from_code=leg1.from_code or src,
                     to_code=arrival_station,
-                    departure_date=leg1.departure_date,
+                    departure_date=leg1_departure_date,
+                    arrival_date=leg1_arrival_date,
                     availability=a1,
                 ),
                 JourneyLeg(
                     train=leg2,
                     from_code=departure_station,
                     to_code=leg2.to_code or dst,
-                    departure_date=leg2.departure_date,
+                    departure_date=leg2_departure_date,
+                    arrival_date=leg2_arrival_date,
                     availability=a2,
                 ),
             ],
@@ -367,7 +452,7 @@ class SplitJourneyService:
         a1,
         a2,
         layover: int,
-        offset: int,
+        day_note: str | None,
         arrival_station: str,
         departure_station: str,
         requires_change: bool,
@@ -387,8 +472,8 @@ class SplitJourneyService:
         elif layover < _TIGHT_LAYOVER_MIN:
             warnings.append(f"Tight layover of {layover} min at {arrival_station}.")
 
-        if offset >= _MINUTES_PER_DAY:
-            warnings.append("Second leg departs the day after the first leg arrives.")
+        if day_note:
+            warnings.append(day_note)
 
         for idx, leg, avail in ((1, leg1, a1), (2, leg2, a2)):
             if avail and avail.confirm_chance is not None and avail.confirm_chance < 100:

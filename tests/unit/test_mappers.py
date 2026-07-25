@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
+
 from transit_mcp.providers.confirmtkt.mappers import (
+    map_availability,
     map_route,
     map_search_result,
     map_stations,
+    sanitize_status,
 )
+from transit_mcp.services.ranking import class_is_available
 
 
 def test_map_stations_parses_station_list(autosuggest_payload):
@@ -60,3 +65,67 @@ def test_map_route_orders_major_and_intermediate(schedule_payload):
     # Distances are non-decreasing along the route.
     dists = [s.distance_from_origin for s in route.stops if s.distance_from_origin is not None]
     assert dists == sorted(dists)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Trailing fixed-width padding is dropped.
+        ("NOT AVAILABLE#", "NOT AVAILABLE"),
+        ("AVAILABLE-0072#", "AVAILABLE-0072"),
+        ("GNWL38/WL10#", "GNWL38/WL10"),
+        ("REGRET/WL  #", "REGRET/WL"),
+        # Words clipped by the fixed-width field are completed.
+        ("TRAIN CANCELLE#", "TRAIN CANCELLED"),
+        ("NOT AVAILABL#", "NOT AVAILABLE"),
+        ("Train Cancelle#", "Train Cancelled"),
+        ("CHART PREPARE#", "CHART PREPARED"),
+        # Ambiguous or unknown stubs are left alone rather than guessed.
+        ("TRAIN#", "TRAIN"),
+        ("CHART#", "CHART"),
+        ("SOME NEW STATUS#", "SOME NEW STATUS"),
+        # Nothing to clean.
+        ("AVAILABLE-0072", "AVAILABLE-0072"),
+        ("#", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_sanitize_status_strips_padding_and_repairs_truncation(raw, expected):
+    assert sanitize_status(raw) == expected
+
+
+def test_map_availability_sanitizes_every_status_field():
+    a = map_availability(
+        {
+            "travelClass": "3a",
+            "quota": "gn",
+            "availability": "TRAIN CANCELLE#",
+            "availabilityDisplayName": "NOT AVAILABLE#",
+            "confirmTktStatus": "TRAIN CANCELLE#",
+            "fare": "1650",
+            "predictionPercentage": "0",
+        }
+    )
+    assert a.travel_class == "3A"
+    assert a.status == "TRAIN CANCELLED"
+    assert a.status_display == "NOT AVAILABLE"
+    assert a.confirm_status == "TRAIN CANCELLED"
+    # The repaired status now matches ranking's vocabulary, so a cancelled train is
+    # correctly excluded instead of passing as bookable.
+    assert class_is_available(a) is False
+
+
+def test_map_availability_keeps_seat_count_from_padded_status():
+    a = map_availability(
+        {
+            "travelClass": "SL",
+            "availability": "AVAILABLE-0072#",
+            "availabilityDisplayName": "AVL 72#",
+            "fare": "700",
+        }
+    )
+    assert a.status == "AVAILABLE-0072"
+    assert a.status_display == "AVL 72"
+    assert a.seats == 72
+    assert class_is_available(a) is True

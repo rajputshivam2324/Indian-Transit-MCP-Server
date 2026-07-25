@@ -128,6 +128,7 @@ class JourneyLeg(BaseModel):
     from_code: str
     to_code: str
     departure_date: str | None = None  # DD-MM-YYYY (leg 2 may be the next day)
+    arrival_date: str | None = None  # DD-MM-YYYY; differs when the leg runs overnight
     availability: ClassAvailability | None = None
 
 

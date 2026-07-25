@@ -56,8 +56,10 @@ SPLIT_JOURNEY_GUIDANCE = [
     "travel between them - treat short layovers as unrealistic.",
     "Step 4 - A journey is only as reliable as its weakest leg: inspect each leg's "
     "availability.confirm_chance and status, not just combined_confirm_chance.",
-    "Step 5 - travel_class/total_fare describe one class booked on both legs; check "
-    "each leg's departure_date, as the second leg may depart the next day.",
+    "Step 5 - travel_class/total_fare describe one class booked on both legs; read each "
+    "leg's departure_date AND arrival_date. An overnight leg 1 arrives on the following "
+    "date, so compare leg 2's departure_date against leg 1's arrival_date - not against "
+    "leg 1's departure_date - before describing a connection as a day-long wait.",
     "Step 6 - Recommend the highest combined_confirm_chance option with no blocking "
     "warnings, explain the trade-offs of the rest, and surface every warning to the user.",
     "Step 7 - Each itinerary has a ready-to-present `display` string containing both "

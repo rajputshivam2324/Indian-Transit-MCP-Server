@@ -242,6 +242,93 @@ async def test_split_journey_flags_same_city_station_change():
     assert any("station change" in w.lower() for w in it.warnings)
 
 
+def _overnight_split_service(leg1_train, leg2_train):
+    """Wire a split service whose leg-2 candidate only exists on the NEXT day."""
+    baseline = TrainSearchResult(
+        source_code="AAA", destination_code="CCC", date=DATE,
+        trains=[make_train("900", from_code="AAA", to_code="CCC", distance=1000)],
+    )
+    train_provider = FakeTrainProvider({
+        ("AAA", "CCC", DATE): baseline,
+        ("AAA", "BBB", DATE): TrainSearchResult(
+            source_code="AAA", destination_code="BBB", date=DATE, trains=[leg1_train]
+        ),
+        ("BBB", "CCC", NEXT): TrainSearchResult(
+            source_code="BBB", destination_code="CCC", date=NEXT, trains=[leg2_train]
+        ),
+    })
+    route_provider = FakeRouteProvider({
+        "900": make_route("900", [
+            ("AAA", 1, 0.0, True),
+            ("BBB", 1, 400.0, True),
+            ("CCC", 1, 1000.0, True),
+        ]),
+    })
+    stations = StationService(FakeStationProvider())
+    search = TrainSearchService(train_provider, stations)
+    return SplitJourneyService(stations, search, RouteService(route_provider))
+
+
+async def test_split_journey_overnight_leg1_is_not_flagged_as_next_day():
+    """Regression: leg 1 departs 22:00 and arrives 06:00 the NEXT day, and leg 2
+    departs 08:00 that same next day. The day comparison must use leg 1's arrival
+    day, not its departure day, so this is a same-day connection - not 'the day
+    after the first leg arrives'."""
+    svc = _overnight_split_service(
+        make_train(
+            "L1", from_code="AAA", to_code="BBB",
+            departure="22:00", arrival="06:00", duration_min=480,
+            availability=[make_avail("3A", fare=1000, chance=100)],
+        ),
+        make_train(
+            "L2", from_code="BBB", to_code="CCC",
+            departure="08:00", arrival="13:00", duration_min=300,
+            availability=[make_avail("3A", fare=1200, chance=100)],
+        ),
+    )
+    itineraries = await svc.plan("AAA", "CCC", DATE)
+    assert len(itineraries) == 1
+    it = itineraries[0]
+    assert it.layover_min == 120  # 06:00 -> 08:00, both on NEXT
+
+    # The legs carry the real calendar dates, including leg 1's rolled-over arrival.
+    assert it.legs[0].departure_date == DATE
+    assert it.legs[0].arrival_date == NEXT
+    assert it.legs[1].departure_date == NEXT
+
+    assert not any(
+        "day after the first leg arrives" in w for w in it.warnings
+    ), it.warnings
+    note = next(w for w in it.warnings if "overnight" in w.lower())
+    assert NEXT in note
+    assert "same day" in note.lower()
+
+
+async def test_split_journey_warns_when_leg2_departs_day_after_arrival():
+    """The next-day warning still fires when leg 2 really does depart a calendar
+    day after leg 1 arrives (leg 1 lands 21:00 on the departure day)."""
+    svc = _overnight_split_service(
+        make_train(
+            "L1", from_code="AAA", to_code="BBB",
+            departure="18:00", arrival="21:00", duration_min=180,
+            availability=[make_avail("3A", fare=1000, chance=100)],
+        ),
+        make_train(
+            "L2", from_code="BBB", to_code="CCC",
+            departure="01:00", arrival="06:00", duration_min=300,
+            availability=[make_avail("3A", fare=1200, chance=100)],
+        ),
+    )
+    itineraries = await svc.plan("AAA", "CCC", DATE)
+    assert len(itineraries) == 1
+    it = itineraries[0]
+    assert it.layover_min == 240  # 21:00 -> 01:00 next day
+    assert it.legs[0].arrival_date == DATE  # leg 1 does not cross midnight
+
+    note = next(w for w in it.warnings if "day after the first leg arrives" in w)
+    assert NEXT in note and DATE in note
+
+
 def _multimodal(enable_bus: bool, bus_trips=None, bus_fail=False):
     trains = TrainSearchResult(
         source_code="NDLS", destination_code="MMCT", date=DATE,
