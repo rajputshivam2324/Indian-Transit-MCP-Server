@@ -127,7 +127,7 @@ PAIRS_15708 = {
     ("PNP", "MFP"): dict(
         dep="14:14", arr="14:55", km=1164, avail=[("3A", "RLWL28/WL14", 75, 1475)]
     ),
-    # The 7th-ranked candidate: outside the default budget of 6.
+    # Further out in the boarding-side ranking (was past the old budget of 6).
     ("KUN", "MFP"): dict(
         dep="13:50", arr="14:55", km=1199, avail=[("3A", "RLWL28/WL14", 76, 1490)]
     ),
@@ -196,7 +196,7 @@ def pairs_12204(asr_shc: tuple[str, int, int] = ("GNWL116/WL54", 79, 1305)) -> d
         ("JUC", "MFP"): dict(
             dep="05:10", arr="05:15", km=1426, avail=[("3A", "PQWL52/WL29", 86, 1165)]
         ),
-        # Outside the default budget of 6 (7th), reachable with a larger max_candidates.
+        # Reachable within the default full-window budget (was outside the old budget of 6).
         ("BEAS", "MFP"): dict(
             dep="04:30", arr="05:15", km=1462, avail=[("3A", "GNWL116/WL54", 75, 1200)]
         ),

@@ -76,7 +76,7 @@ async def test_tool_is_registered_alongside_every_existing_tool():
         "min_gain_pct",
     }
     assert props["max_extra_stations_each_side"]["default"] == 5
-    assert props["max_candidates"]["default"] == 6
+    assert props["max_candidates"]["default"] == 64
     assert props["min_gain_pct"]["default"] == 10
     assert props["quota"]["default"] == "GN"
     assert "find_best_booking_segment" in INSTRUCTIONS  # the server tells clients when to use it

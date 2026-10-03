@@ -201,18 +201,21 @@ How it searches, per train:
 - Your origin and destination must be scheduled halts, in the train's direction. It never
   suggests a reverse trip. A train that does not qualify comes back with a `reason` (for example
   `not on route / wrong direction`) and an explanation in `detail`.
-- Candidate booking stations are the `max_extra_stations_each_side` (default 5) nearest halting
-  major stops beyond each of your stations, plus the train's origin and terminus. They are counted
-  as stations, not route rows, because a route also lists every station the train runs through.
-- At most `max_candidates` (default 6) longer pairs are looked up **per train**. Pairs that start
-  at the train's origin go first, then pairs that only move the boarding side (the boarding
-  station drives the waitlist class far more than the destination), then alighting-side pairs,
-  then both. Inside each group, shortest extra distance first. Each lookup is one search that
-  covers every class, served from the same short-lived cache as `search_trains`.
+- Candidate booking stations are the `max_extra_stations_each_side` (default 5) nearest
+  halting major stops beyond each of your stations, plus the train's origin and terminus. They
+  are counted as stations, not route rows, because a route also lists every station the train
+  runs through.
+- By default every longer pair in that window is looked up (`max_candidates` default 64, the
+  max), so a normal call does not need the agent to raise knobs. Lower the cap only to save
+  upstream cost. Pairs that start at the train's origin go first, then pairs that only move the
+  boarding side (the boarding station drives the waitlist class far more than the destination),
+  then alighting-side pairs, then both. Inside each group, shortest extra distance first. Each
+  lookup is one search that covers every class, served from the same short-lived cache as
+  `search_trains`.
 - A suggestion is kept when its `confirm_chance` beats the same class on your own leg by at least
   `min_gain_pct` **percentage points** (default 10), so 72% to 87% is a gain of 15. Results are
   sorted by gain, then fare, then extra distance.
-- Without `train_number`, the corridor's direct trains (up to 10) are analysed, best first. A
+- Without `train_number`, the corridor's direct trains (up to 30) are analysed, best first. A
   train the corridor search returns from a neighbouring station (NDLS for DLI) is analysed from
   that station, and `warnings` says so.
 - On an overnight train the booking station can be reached a day earlier than your own. Every

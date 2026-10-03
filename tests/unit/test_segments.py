@@ -281,7 +281,7 @@ async def test_15708_dli_mfp_suggests_asr_mfp():
         ("MFP", 1523.0, "user_destination"),
         ("KIR", 1805.0, "train_terminus"),
     ]
-    assert (t.candidates_considered, t.candidates_evaluated, t.candidates_unavailable) == (48, 6, 1)
+    assert (t.candidates_considered, t.candidates_evaluated, t.candidates_unavailable) == (48, 48, 41)
 
 
 async def test_12204_dli_mfp_suggests_asr_shc_when_its_gain_clears_the_threshold():
@@ -316,16 +316,15 @@ async def test_12204_asr_shc_leads_at_default_threshold_once_its_prediction_rise
     assert report.best.suggestion.gain_pct == 16
 
 
-async def test_a_larger_budget_reaches_more_boarding_stations():
+async def test_a_tight_budget_stops_before_the_seventh_candidate():
+    # Full-window default looks up BEAS; an explicit low budget still stops before it.
     svc, provider = service_12204()
-    await svc.find("DLI", "MFP", DATE, train_number="12204", min_gain_pct=0)
-    assert ("BEAS", "MFP", DATE) not in provider.calls  # 7th candidate, outside the budget of 6
-    provider.calls.clear()
-    report = await svc.find(
-        "DLI", "MFP", DATE, train_number="12204", min_gain_pct=0, max_candidates=7
-    )
+    report = await svc.find("DLI", "MFP", DATE, train_number="12204", min_gain_pct=0)
     assert ("BEAS", "MFP", DATE) in provider.calls
     assert ("BEAS", "MFP") in _pairs(report.trains[0])
+    provider.calls.clear()
+    await svc.find("DLI", "MFP", DATE, train_number="12204", min_gain_pct=0, max_candidates=6)
+    assert ("BEAS", "MFP", DATE) not in provider.calls
 
 
 # --------------------------------------------------------------------------- #
@@ -476,20 +475,22 @@ async def test_max_candidates_caps_upstream_lookups_nearest_first():
     assert len(provider.calls) == 3
 
 
-async def test_default_budget_skips_the_seventh_candidate():
+async def test_default_budget_evaluates_the_full_station_window():
     svc, provider = service_15708()
-    await svc.find("DLI", "MFP", DATE, train_number="15708", travel_class="3A")
+    report = await svc.find("DLI", "MFP", DATE, train_number="15708", travel_class="3A")
+    t = report.trains[0]
     looked_up = {c[:2] for c in provider.calls}
-    assert ("PNP", "MFP") in looked_up and ("KUN", "MFP") not in looked_up
-    assert len(provider.calls) == 1 + 6
+    assert t.candidates_evaluated == t.candidates_considered == 48
+    assert ("PNP", "MFP") in looked_up and ("KUN", "MFP") in looked_up
+    assert len(provider.calls) == 1 + 48
 
 
 async def test_unavailable_candidates_are_counted_and_called_out():
     svc, _ = service_15708()
     report = await svc.find("DLI", "MFP", DATE, train_number="15708", travel_class="3A")
     t = report.trains[0]
-    assert t.candidates_unavailable == 1  # BDMJ->MFP exists but is not sold in 3A
-    assert any("1 candidate segment(s) returned no usable availability" in w for w in t.warnings)
+    assert t.candidates_unavailable == 41  # most window pairs are not sold in 3A
+    assert any("41 candidate segment(s) returned no usable availability" in w for w in t.warnings)
 
 
 async def test_search_cache_is_reused_across_calls():
@@ -497,7 +498,7 @@ async def test_search_cache_is_reused_across_calls():
     first = await svc.find("DLI", "MFP", DATE, train_number="15708", travel_class="3A")
     looked_up = len(provider.calls)
     second = await svc.find("DLI", "MFP", DATE, train_number="15708", travel_class="3A")
-    assert looked_up == 7 and len(provider.calls) == looked_up  # nothing re-fetched
+    assert looked_up == 49 and len(provider.calls) == looked_up  # nothing re-fetched
     assert second.trains[0].suggestions == first.trains[0].suggestions
 
 
@@ -558,7 +559,7 @@ async def test_a_neighbouring_station_variant_is_not_mistaken_for_the_requested_
     svc = make_service(provider, {"15708": route_15708()})
     report = await svc.find("DLI", "MFP", DATE, train_number="15708", travel_class="3A")
     t = report.trains[0]
-    assert t.suggestions == [] and t.candidates_unavailable == 6  # none of the 6 priced
+    assert t.suggestions == [] and t.candidates_unavailable == 48  # none of the window priced
     assert t.reason == REASON_NO_GAIN and "none of them returned usable availability" in t.detail
 
 
@@ -605,7 +606,7 @@ async def test_requested_class_not_sold_on_the_user_leg():
     [
         {"quota": "TQ"},
         {"max_candidates": 0},
-        {"max_candidates": 99},
+        {"max_candidates": 200},
         {"max_extra_stations_each_side": -1},
         {"min_gain_pct": 101},
         {"min_gain_pct": -1},

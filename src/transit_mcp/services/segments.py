@@ -58,15 +58,17 @@ log = get_logger("segments")
 
 GENERAL_QUOTA = "GN"
 
-DEFAULT_MAX_EXTRA_STATIONS = 5
-DEFAULT_MAX_CANDIDATES = 6
 DEFAULT_MIN_GAIN_PCT = 10
-DEFAULT_TRAIN_LIMIT = 10
 
 # Every candidate pair is an upstream search; these bounds keep one call polite.
+# Defaults evaluate the full station window / corridor so a normal call does not need
+# the agent to raise knobs via next_actions. Lower them only to save upstream cost.
 MAX_EXTRA_STATIONS_LIMIT = 15
-MAX_CANDIDATES_LIMIT = 24
+MAX_CANDIDATES_LIMIT = 64
 MAX_TRAIN_LIMIT = 30
+DEFAULT_MAX_EXTRA_STATIONS = 5
+DEFAULT_MAX_CANDIDATES = MAX_CANDIDATES_LIMIT
+DEFAULT_TRAIN_LIMIT = MAX_TRAIN_LIMIT
 _DEFAULT_CONCURRENCY = 6
 
 _MINUTES_PER_DAY = 1440
@@ -769,9 +771,15 @@ class BookingSegmentService:
                 seen_text = f"the best improvement seen was +{best_seen[0]} points ({best_seen[1]})"
             out.detail = (
                 f"Checked {len(chosen)} of {len(pairs)} longer segment(s) on {number}; "
-                f"{seen_text}, below the required +{q.min_gain}. Lower min_gain_pct, or raise "
-                "max_candidates / max_extra_stations_each_side to look further."
+                f"{seen_text}, below the required +{q.min_gain}. Lower min_gain_pct"
             )
+            if len(chosen) < len(pairs):
+                out.detail += ", or raise max_candidates to try more pairs in this window"
+            else:
+                out.detail += (
+                    ", or raise max_extra_stations_each_side to look further along the route"
+                )
+            out.detail += "."
 
     # ------------------------------------------------------------------ #
     # Helpers

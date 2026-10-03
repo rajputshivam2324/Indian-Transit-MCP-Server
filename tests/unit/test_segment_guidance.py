@@ -16,7 +16,7 @@ def _report(trains, **kw) -> BookingSegmentReport:
         date=DATE,
         min_gain_pct=10,
         max_extra_stations_each_side=5,
-        max_candidates=6,
+        max_candidates=64,
         trains_matched=len(trains),
         trains=trains,
     )
