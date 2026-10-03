@@ -6,17 +6,30 @@ All settings are overridable via ``TRANSIT_*`` environment variables (or a local
 
 from __future__ import annotations
 
+import os
 import uuid
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _split_csv(value: str) -> list[str]:
     """``"a, b,,c"`` -> ``["a", "b", "c"]``: env vars carry lists as plain comma text."""
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _default_server_host() -> str:
+    """All interfaces on a hosting platform, loopback everywhere else.
+
+    Render, Heroku, Railway, Cloud Run and similar put a proxy in front of the app and hand it
+    a ``PORT`` to listen on. That proxy cannot reach a loopback-only listener (Render reports
+    "no open ports detected on 0.0.0.0"), so the server has to bind 0.0.0.0 there. Render also
+    sets ``RENDER=true``. ``TRANSIT_SERVER_HOST`` overrides this either way.
+    """
+    hosted = os.environ.get("PORT") or os.environ.get("RENDER")
+    return "0.0.0.0" if hosted else "127.0.0.1"
 
 
 class Settings(BaseSettings):
@@ -27,6 +40,9 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # server_port also answers to the platform-standard PORT (an alias), so constructing
+        # Settings(server_port=...) by field name has to keep working.
+        populate_by_name=True,
     )
 
     # --- ConfirmTkt upstream -------------------------------------------------
@@ -63,10 +79,17 @@ class Settings(BaseSettings):
     # --- MCP server (how clients connect to this process) --------------------
     # "streamable-http" serves MCP at http://<server_host>:<server_port><server_path>;
     # "stdio" is for clients that launch the process themselves. The server has no
-    # authentication of its own, so it listens on loopback unless told otherwise.
+    # authentication of its own, so it listens on loopback unless it is told otherwise - or
+    # it is running on a hosting platform (PORT / RENDER set), which needs 0.0.0.0.
     transport: Literal["streamable-http", "stdio"] = "streamable-http"
-    server_host: str = "127.0.0.1"
-    server_port: int = Field(default=8000, ge=1, le=65535)
+    server_host: str = Field(default_factory=_default_server_host)
+    # TRANSIT_SERVER_PORT wins; the platform-standard PORT is the fallback.
+    server_port: int = Field(
+        default=8000,
+        ge=1,
+        le=65535,
+        validation_alias=AliasChoices("TRANSIT_SERVER_PORT", "PORT"),
+    )
     server_path: str = "/mcp"
     # Extra Host / Origin header values to accept (comma-separated), on top of the loopback
     # ones. Needed behind a reverse proxy that forwards the public hostname, and the only way

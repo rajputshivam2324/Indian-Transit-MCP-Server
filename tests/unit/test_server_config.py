@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -17,13 +16,6 @@ from transit_mcp.server.main import create_app, listen_url, transport_security_f
 # `transit_mcp.server` re-exports the `main` *function*, which shadows the `main` submodule
 # as a package attribute, so the module has to be fetched by its dotted name.
 main_module = importlib.import_module("transit_mcp.server.main")
-
-
-@pytest.fixture(autouse=True)
-def _hermetic_env(monkeypatch):
-    """Nothing from the developer's shell may change what these tests see."""
-    for name in [n for n in os.environ if n.startswith("TRANSIT_")]:
-        monkeypatch.delenv(name)
 
 
 def _settings(**kw) -> Settings:
@@ -52,6 +44,38 @@ def test_every_server_setting_can_come_from_the_environment(monkeypatch):
     assert s.server_path == "/transit/mcp"
     assert s.allowed_host_list == ["a.example", "b.example:*"]
     assert s.allowed_origin_list == ["https://a.example"]
+
+
+def test_a_hosting_platforms_port_moves_the_server_to_all_interfaces(monkeypatch):
+    # Render hands the app PORT=10000 and only looks for an open port on 0.0.0.0.
+    monkeypatch.setenv("PORT", "10000")
+    s = _settings()
+    assert (s.server_host, s.server_port) == ("0.0.0.0", 10000)
+
+
+def test_render_alone_is_enough_to_listen_on_all_interfaces(monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    assert _settings().server_host == "0.0.0.0"
+
+
+def test_explicit_server_settings_beat_the_platform_defaults(monkeypatch):
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setenv("TRANSIT_SERVER_HOST", "127.0.0.1")
+    monkeypatch.setenv("TRANSIT_SERVER_PORT", "9001")
+    s = _settings()
+    assert (s.server_host, s.server_port) == ("127.0.0.1", 9001)
+
+
+def test_port_can_still_be_set_by_field_name():
+    # server_port answers to the alias PORT; constructing it by name must keep working.
+    assert _settings(server_port=9001).server_port == 9001
+
+
+def test_a_malformed_platform_port_fails_loudly(monkeypatch):
+    monkeypatch.setenv("PORT", "not-a-port")
+    with pytest.raises(ValidationError):
+        _settings()
 
 
 @pytest.mark.parametrize(
@@ -131,6 +155,17 @@ async def test_create_app_hands_the_http_settings_to_fastmcp():
         # Loopback: the SDK switched DNS-rebinding protection on because host was a
         # constructor argument.
         assert mcp.settings.transport_security.enable_dns_rebinding_protection is True
+    finally:
+        await container.aclose()
+
+
+async def test_create_app_on_a_hosting_platform_listens_where_the_platform_looks(monkeypatch):
+    monkeypatch.setenv("PORT", "10000")
+    container = make_container()
+    try:
+        mcp, _ = create_app(_settings(), container)
+        assert (mcp.settings.host, mcp.settings.port) == ("0.0.0.0", 10000)
+        assert listen_url(_settings()) == "http://0.0.0.0:10000/mcp"
     finally:
         await container.aclose()
 
