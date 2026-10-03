@@ -12,7 +12,10 @@ import contextlib
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
+from .. import __version__
 from ..config import Settings, get_settings
 from ..infra.logging import configure_logging, get_logger
 from .app import Container, build_container
@@ -67,6 +70,28 @@ def transport_security_for(s: Settings) -> TransportSecuritySettings | None:
     )
 
 
+def _register_health_routes(mcp: FastMCP, s: Settings) -> None:
+    """Expose ``/`` and ``/health`` so platform probes and browsers don't hit a bare 404.
+
+    MCP itself lives at ``s.server_path`` (default ``/mcp``). Render's default health check
+    and anyone opening the service URL hit ``/``, which FastMCP does not serve on its own.
+    """
+
+    async def health(_request: Request) -> Response:
+        return JSONResponse(
+            {
+                "ok": True,
+                "service": "indian-transit",
+                "version": __version__,
+                "transport": "streamable-http",
+                "mcp": s.server_path,
+            }
+        )
+
+    mcp.custom_route("/", methods=["GET", "HEAD"])(health)
+    mcp.custom_route("/health", methods=["GET", "HEAD"])(health)
+
+
 def create_app(
     settings: Settings | None = None,
     container: Container | None = None,
@@ -88,6 +113,7 @@ def create_app(
         transport_security=transport_security_for(s),
     )
     register_all(mcp, c)
+    _register_health_routes(mcp, s)
     return mcp, c
 
 

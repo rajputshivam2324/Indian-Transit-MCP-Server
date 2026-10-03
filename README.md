@@ -59,9 +59,11 @@ uv run indian-transit-mcp
 ```
 
 That serves MCP over streamable HTTP at `http://127.0.0.1:8000/mcp` and keeps running until you
-stop it. It listens on loopback only and has no authentication of its own, so read
-[Security](#security) before you change that. To listen somewhere else, set `TRANSIT_SERVER_HOST`,
-`TRANSIT_SERVER_PORT` or `TRANSIT_SERVER_PATH` (see [Configuration](#configuration)).
+stop it. On your own machine it listens on loopback only, and it has no authentication of its own,
+so read [Security](#security) before you change that. To listen somewhere else, set
+`TRANSIT_SERVER_HOST`, `TRANSIT_SERVER_PORT` or `TRANSIT_SERVER_PATH` (see
+[Configuration](#configuration)). On a hosting platform such as Render it picks the platform's
+address and port by itself, see [Deploying on Render](#deploying-on-render).
 
 ## Connect it to your client
 
@@ -108,7 +110,9 @@ script (something like `/abs/path/.venv/bin/indian-transit-mcp`) with `"args": [
 The HTTP server has **no authentication**. Anyone who can reach its port can call every tool, and
 each call spends requests against the upstream service. The defaults keep that contained:
 
-- It listens on `127.0.0.1` only, so only programs on your machine can connect.
+- On your own machine it listens on `127.0.0.1` only, so only programs on your machine can
+  connect. (On a hosting platform it listens on `0.0.0.0` and the platform's public URL reaches
+  it; see [Deploying on Render](#deploying-on-render).)
 - The MCP SDK's DNS-rebinding protection is on for that bind. A request whose `Host` or `Origin`
   is not local is refused (421 / 403), so a web page you visit cannot call the server through your
   browser.
@@ -125,6 +129,45 @@ If you expose it beyond your machine, you have to add the protection yourself:
   non-loopback bind they are what switches the `Host` / `Origin` check on at all.
 - Binding to a non-loopback address (`TRANSIT_SERVER_HOST=0.0.0.0`) makes the server log a warning
   at start-up, and a second one if no allow-list is set.
+
+## Deploying on Render
+
+A Render web service must listen on `0.0.0.0` at the port in `PORT` (10000 unless you change it);
+a server bound to `127.0.0.1` makes the deploy fail with "no open ports detected on 0.0.0.0". When
+`PORT` or `RENDER` is set the server does the right thing on its own, so no environment variables
+are needed:
+
+- Build command: whatever you already use to install the project.
+- Start command: `uv run indian-transit-mcp`
+- Your MCP URL: `https://<your-service>.onrender.com/mcp`
+- Leave `TRANSIT_TRANSPORT` unset (or set it to `streamable-http`). `stdio` is only for clients
+  that launch the process themselves; a Render web service needs HTTP.
+
+`/` and `/health` return a small JSON status page (so Render's default health check and a browser
+opening the service URL get `200`, not `404`). MCP clients must still use the `/mcp` path —
+opening the root URL in a browser is not how you talk to the server.
+
+Point an MCP client at:
+
+```json
+{
+  "mcpServers": {
+    "indian-transit": {
+      "url": "https://<your-service>.onrender.com/mcp"
+    }
+  }
+}
+```
+
+Optionally set `TRANSIT_ALLOWED_HOSTS` to your public hostname (e.g.
+`indian-transit-mcp-server.onrender.com`) so DNS-rebinding protection is on.
+
+The start-up log should contain `serving MCP over streamable HTTP at http://0.0.0.0:10000/mcp`. If
+it shows `127.0.0.1` instead, `TRANSIT_SERVER_HOST` is set to loopback on the service; remove it.
+Other platforms that set `PORT` (Heroku, Railway, Cloud Run) get the same treatment.
+
+A Render web service is reachable from the public internet and this server has no authentication,
+so anyone who has the URL can call every tool. See [Security](#security) before you share it.
 
 ## Tools
 
@@ -336,8 +379,10 @@ The ones you are most likely to touch:
 
 - `TRANSIT_TRANSPORT`: `streamable-http` (the default) or `stdio`.
 - `TRANSIT_SERVER_HOST`, `TRANSIT_SERVER_PORT`, `TRANSIT_SERVER_PATH` for where the HTTP server
-  listens (default `127.0.0.1`, `8000`, `/mcp`). Not to be confused with `TRANSIT_HTTP_*` below,
-  which configure the client that calls ConfirmTkt.
+  listens (default `127.0.0.1`, `8000`, `/mcp`). When a hosting platform sets `PORT` (or
+  `RENDER`), the host defaults to `0.0.0.0` and the port to `$PORT`; the `TRANSIT_` variables
+  still win. Not to be confused with `TRANSIT_HTTP_*` below, which configure the client that
+  calls ConfirmTkt.
 - `TRANSIT_ALLOWED_HOSTS`, `TRANSIT_ALLOWED_ORIGINS`: extra `Host` / `Origin` values the HTTP
   server accepts, comma-separated. See [Security](#security).
 - `TRANSIT_ENABLE_BUS`, `TRANSIT_ENABLE_FLIGHT` to turn on the optional modes.

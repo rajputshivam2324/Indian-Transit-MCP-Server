@@ -120,6 +120,21 @@ async def test_the_configured_path_is_served_and_the_default_one_is_not():
         assert (await _post_initialize(f"{base}/mcp")).status_code == 404
 
 
+async def test_root_and_health_answer_platform_probes():
+    """Render hits ``/`` with HEAD/GET; browsers open the service URL the same way."""
+    async with asyncio.timeout(30), serve(server_path="/transit/mcp") as base:
+        async with httpx.AsyncClient() as client:
+            for path in ("/", "/health"):
+                get = await client.get(f"{base}{path}")
+                assert get.status_code == 200
+                body = get.json()
+                assert body["ok"] is True and body["mcp"] == "/transit/mcp"
+                assert body["service"] == "indian-transit"
+
+                head = await client.head(f"{base}{path}")
+                assert head.status_code == 200
+
+
 async def test_a_foreign_host_header_is_refused_but_local_names_work():
     async with asyncio.timeout(30), serve() as base:
         url = f"{base}/mcp"
