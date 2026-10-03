@@ -23,6 +23,7 @@ from ..providers.confirmtkt import (
 from ..providers.estimators import PassthroughConfirmationEstimator
 from ..services.planning import MultiModalService, SplitJourneyService
 from ..services.routes import NearbyStationService, RouteService
+from ..services.segments import BookingSegmentService
 from ..services.stations import StationService
 from ..services.trains import (
     AvailabilityService,
@@ -45,6 +46,9 @@ class Container:
     nearby: NearbyStationService
     split: SplitJourneyService
     multimodal: MultiModalService
+    # Optional so containers assembled by hand (tests, embedders) keep working; the
+    # find_best_booking_segment tool builds one from the other services when it is None.
+    segments: BookingSegmentService | None = None
 
     async def aclose(self) -> None:
         await self.http.aclose()
@@ -121,6 +125,8 @@ def build_container(
         enable_flight=s.enable_flight,
     )
 
+    segments = BookingSegmentService(stations, train_search, routes, estimator)
+
     return Container(
         settings=s,
         http=http,
@@ -132,4 +138,5 @@ def build_container(
         nearby=nearby,
         split=split,
         multimodal=multimodal,
+        segments=segments,
     )

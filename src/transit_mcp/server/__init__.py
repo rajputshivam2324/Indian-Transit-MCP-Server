@@ -1,4 +1,4 @@
-"""Thin MCP adapter: composition root, tools, and stdio entrypoint."""
+"""Thin MCP adapter: composition root, tools, and server entrypoint."""
 
 from __future__ import annotations
 

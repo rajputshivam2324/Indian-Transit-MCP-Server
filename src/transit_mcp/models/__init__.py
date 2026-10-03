@@ -24,6 +24,15 @@ from .envelopes import (
     err,
     ok,
 )
+from .segments import (
+    BestSegment,
+    BookingSegmentReport,
+    SegmentClassFare,
+    SegmentStop,
+    SegmentSuggestion,
+    SegmentUserLeg,
+    TrainSegmentResult,
+)
 
 __all__ = [
     # enums
@@ -43,6 +52,14 @@ __all__ = [
     "BusTrip",
     "Flight",
     "TripOption",
+    # booking segments
+    "SegmentClassFare",
+    "SegmentUserLeg",
+    "SegmentSuggestion",
+    "SegmentStop",
+    "TrainSegmentResult",
+    "BestSegment",
+    "BookingSegmentReport",
     # envelopes
     "Result",
     "ErrorResult",

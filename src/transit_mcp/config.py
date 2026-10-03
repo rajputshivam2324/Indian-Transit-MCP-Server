@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import uuid
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _split_csv(value: str) -> list[str]:
+    """``"a, b,,c"`` -> ``["a", "b", "c"]``: env vars carry lists as plain comma text."""
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 class Settings(BaseSettings):
@@ -54,8 +60,36 @@ class Settings(BaseSettings):
     enable_bus: bool = False
     enable_flight: bool = False
 
+    # --- MCP server (how clients connect to this process) --------------------
+    # "streamable-http" serves MCP at http://<server_host>:<server_port><server_path>;
+    # "stdio" is for clients that launch the process themselves. The server has no
+    # authentication of its own, so it listens on loopback unless told otherwise.
+    transport: Literal["streamable-http", "stdio"] = "streamable-http"
+    server_host: str = "127.0.0.1"
+    server_port: int = Field(default=8000, ge=1, le=65535)
+    server_path: str = "/mcp"
+    # Extra Host / Origin header values to accept (comma-separated), on top of the loopback
+    # ones. Needed behind a reverse proxy that forwards the public hostname, and the only way
+    # to turn DNS-rebinding protection on when server_host is not loopback.
+    allowed_hosts: str = ""
+    allowed_origins: str = ""
+
     # --- Logging -------------------------------------------------------------
     log_level: str = "INFO"
+
+    @field_validator("server_path")
+    @classmethod
+    def _normalize_server_path(cls, value: str) -> str:
+        """Always a leading slash and no trailing one (``mcp`` -> ``/mcp``, ``""`` -> ``/``)."""
+        return "/" + value.strip().strip("/")
+
+    @property
+    def allowed_host_list(self) -> list[str]:
+        return _split_csv(self.allowed_hosts)
+
+    @property
+    def allowed_origin_list(self) -> list[str]:
+        return _split_csv(self.allowed_origins)
 
     def resolved_device_id(self) -> str:
         """Return the configured device id, generating a stable random one if unset."""

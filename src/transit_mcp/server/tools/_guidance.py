@@ -11,6 +11,8 @@ stopping early. The goal is comprehensive answers where nothing is dropped.
 
 from __future__ import annotations
 
+from ...services.segments import REASON_NO_GAIN, REASON_NOT_ON_ROUTE
+
 # --------------------------------------------------------------------------- #
 # Full chain-of-thought scaffolds
 # --------------------------------------------------------------------------- #
@@ -74,6 +76,29 @@ SPLIT_JOURNEY_EMPTY_NOTE = (
     "min_confirm_chance."
 )
 
+BOOKING_SEGMENT_GUIDANCE = [
+    "Step 1 - Lead with data.best (the top suggestion across trains), then cover EVERY entry in "
+    "data.trains, including trains with no suggestions - each carries a `reason` (and `detail`). "
+    "Never drop a train silently.",
+    "Step 2 - For each suggestion give: the class, the pair to book (booking_from->booking_to), "
+    "the waitlist type and chance versus the user's own leg (baseline_status / "
+    "baseline_confirm_chance -> status / confirm_chance), gain_pct, extra_fare and extra_km.",
+    "Step 3 - If `status` equals `baseline_status`, the booking has the same waitlist position "
+    "and the gain is only the predictor's station-specific estimate: call that weak evidence, "
+    "not a better queue position.",
+    "Step 4 - Give each `instruction` verbatim, and ALL of the train's `warnings`. The trick "
+    "only works if the waitlist clears: Indian Railways allows a boarding-point change only on "
+    "a confirmed or RAC ticket, so a ticket that stays waitlisted is cancelled.",
+    "Step 5 - Dates: book using the suggestion's departure_date. On an overnight train it can "
+    "be EARLIER than the date the user asked for (the train leaves its origin a day before it "
+    "reaches the user's station). Also report arrival_date.",
+    "Step 6 - Confirm chances are ConfirmTkt predictions, not guarantees, and each suggestion "
+    "costs extra_fare with no refund for the unused leg. Before advising a booking, re-check "
+    "the chosen pair with get_seat_availability.",
+    "Step 7 - With no travel_class the result covers every class and can be long. If the user "
+    "named a class, re-run with travel_class to keep the answer focused.",
+]
+
 
 # --------------------------------------------------------------------------- #
 # ReAct-style next actions (grounded in the actual result)
@@ -116,4 +141,52 @@ def search_next_actions(resp) -> list[str]:
     extra = resp.total_matched - len(resp.trains)
     if extra > 0:
         actions.append(f"{extra} more matches exist beyond the limit; raise `limit` to see them.")
+    return actions
+
+
+def segment_next_actions(report) -> list[str]:
+    """Follow-ups for find_best_booking_segment, grounded in what the search actually did."""
+    if not report.trains:
+        return [
+            "No direct trains matched. Verify the station codes with find_station_code.",
+            "Try suggest_nearby_stations for alternate boarding/alighting points, or another date.",
+            "Use plan_split_journey for single-transfer options.",
+        ]
+
+    actions: list[str] = []
+    if report.best is not None:
+        s = report.best.suggestion
+        actions.append(
+            f"Before advising a booking, re-check {s.booking_from}->{s.booking_to} on "
+            f"{s.departure_date} with get_seat_availability(train_number="
+            f"{report.best.train_number!r}, origin={s.booking_from!r}, "
+            f"destination={s.booking_to!r}, date={s.departure_date!r})."
+        )
+    else:
+        reasons = {t.reason for t in report.trains}
+        if any(t.candidates_evaluated < t.candidates_considered for t in report.trains):
+            actions.append(
+                "Only part of the possible longer bookings was tried (see candidates_evaluated "
+                "vs candidates_considered): raise max_candidates or max_extra_stations_each_side."
+            )
+        if REASON_NO_GAIN in reasons:
+            actions.append(
+                "Lower min_gain_pct to see smaller improvements - each train's detail names the "
+                "best gain it found."
+            )
+        if REASON_NOT_ON_ROUTE in reasons:
+            actions.append(
+                "Some trains were skipped as 'not on route / wrong direction'. Check the "
+                "stations with get_train_route, or try a nearby station (suggest_nearby_stations)."
+            )
+        actions.append(
+            "Otherwise fall back to search_trains (other trains or dates) or plan_split_journey."
+        )
+
+    extra = report.trains_matched - len(report.trains)
+    if extra > 0 and report.train_number is None:
+        actions.append(
+            f"{extra} more train(s) matched the corridor but were not analysed; pass "
+            "train_number to analyse a specific one."
+        )
     return actions

@@ -23,6 +23,7 @@ from .routes import (
     NearbyStationsResult,
     RouteService,
 )
+from .segments import BookingSegmentService
 from .stations import StationService, score_station
 from .trains import (
     AvailabilityService,
@@ -46,6 +47,7 @@ __all__ = [
     "NearbyStationsResult",
     "SplitJourneyService",
     "MultiModalService",
+    "BookingSegmentService",
     "TrainFilters",
     "filter_trains",
     "sort_trains",

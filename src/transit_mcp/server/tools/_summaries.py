@@ -170,3 +170,24 @@ def summarize_confirmation(result) -> str:
     if result.confirm_chance is not None and result.confirm_chance < 60:
         s += " Low chance - consider a backup train, class, or date."
     return s
+
+
+def summarize_segments(report) -> str:
+    """One-paragraph synthesis of a booking-segment report (best option + totals)."""
+    if report.best is None:
+        return report.reason or "No booking segment found."
+    b = report.best
+    s = b.suggestion
+    line = (
+        f"Best: train {b.train_number} - {s.travel_class} {s.booking_from}->{s.booking_to} "
+        f"{s.status or '?'} {s.confirm_chance}% vs {s.baseline_status or '?'} "
+        f"{s.baseline_confirm_chance}% on your leg (+{s.gain_pct} points"
+    )
+    if s.extra_fare is not None:
+        line += f", {'+' if s.extra_fare >= 0 else '-'}Rs {abs(s.extra_fare)}"
+    line += f"). Book for {s.departure_date} departing {s.booking_from} {s.departure}. "
+    line += f"{s.instruction}."
+    total = sum(len(t.suggestions) for t in report.trains)
+    with_s = sum(1 for t in report.trains if t.suggestions)
+    line += f" {total} suggestion(s) on {with_s} of {len(report.trains)} train(s) analysed."
+    return line

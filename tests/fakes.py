@@ -155,3 +155,48 @@ def make_route(number: str, codes_days_dist_major: list[tuple]) -> TrainRoute:
         total_duration_min=600,
         stops=stops,
     )
+
+
+def make_schedule_route(
+    number: str,
+    name: str,
+    rows: list[tuple],
+    *,
+    omit_halt: frozenset[str] = frozenset(),
+) -> TrainRoute:
+    """Build a route shaped like the real ConfirmTkt schedule payload.
+
+    ``rows`` are ``(code, stop_name, day, km, arrival, departure, is_major)``. As upstream:
+    halting majors carry ``halt_min`` (the clock difference), pass-throughs (arrival ==
+    departure, ``is_major`` False) carry none, and the origin/terminus have a single time.
+    ``omit_halt`` blanks ``halt_min`` on the named majors - upstream does that on some real
+    halting stops (arrival 18:28, departure 18:30, no HaltMinutes).
+    """
+    from transit_mcp.common import parse_time_to_minutes
+
+    stops = []
+    for code, stop_name, day, km, arrival, departure, is_major in rows:
+        halt = None
+        arr_min, dep_min = parse_time_to_minutes(arrival), parse_time_to_minutes(departure)
+        if is_major and arr_min is not None and dep_min is not None and code not in omit_halt:
+            halt = (dep_min - arr_min) % 1440
+        stops.append(
+            Stop(
+                code=code,
+                name=stop_name,
+                arrival=arrival,
+                departure=departure,
+                day=day,
+                halt_min=halt,
+                distance_from_origin=km,
+                is_major=is_major,
+            )
+        )
+    return TrainRoute(
+        number=number,
+        name=name,
+        from_code=stops[0].code if stops else "",
+        to_code=stops[-1].code if stops else "",
+        total_duration_min=600,
+        stops=stops,
+    )

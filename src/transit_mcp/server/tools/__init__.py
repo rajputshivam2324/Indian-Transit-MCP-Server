@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..app import Container
-from . import planning, routes, stations, trains
+from . import planning, routes, segments, stations, trains
 
 __all__ = ["register_all"]
 
@@ -14,3 +14,4 @@ def register_all(mcp, container: Container) -> None:
     trains.register(mcp, container)
     routes.register(mcp, container)
     planning.register(mcp, container)
+    segments.register(mcp, container)
